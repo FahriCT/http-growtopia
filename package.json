@@ -1,0 +1,17 @@
+{
+  "name": "senvas-http",
+  "version": "1.0.0",
+  "description": "Firewall ",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "chalk": "^5.2.0",
+    "winston": "^3.8.2"
+  },
+  "author": "senvas",
+  "license": "MIT"
+}
+

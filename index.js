@@ -12,6 +12,7 @@ import { ipLimiterConfig } from "./config.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+console.clear();
 console.log(chalk.blueBright(`
 ███████╗███████╗███╗   ██╗██╗   ██╗ █████╗ ███████╗
 ██╔════╝██╔════╝████╗  ██║██║   ██║██╔══██╗██╔════╝

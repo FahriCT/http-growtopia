@@ -48,7 +48,7 @@ function addAddress(ip) {
 function requestHandler(req, res) {
     let ip = req.connection.remoteAddress;
 
-    if (blacklist.has(ip) {
+    if (blacklist.has(ip)) {
         if (Date.now() > blacklist.get(ip)) {
             blacklist.delete(ip);
         } else {

@@ -6,6 +6,7 @@ import os from "os";
 import chalk from "chalk";
 import winston from "winston";
 import { exec } from "child_process";
+import { fileURLToPath } from 'url'; 
 import { ipLimiterConfig } from "./config.js";
 
 const __filename = fileURLToPath(import.meta.url);

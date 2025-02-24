@@ -1,98 +1,230 @@
-import https from "https";
-import http from "http";
-import fs from "fs";
-import path from "path";
-import os from "os";
-import chalk from "chalk";
-import winston from "winston";
-import { exec } from "child_process";
-import { fileURLToPath } from 'url'; 
-import { ipLimiterConfig } from "./config.js";
+const https = require("https");
+const http = require("http");
+const fs = require("fs");
+const path = require("path");
+const tls = require("tls");
+const find = require("find");
+const cluster = require("cluster");
+const os = require("os");
+const winston = require("winston");
+const { exec } = require("child_process");
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-console.clear();
-console.log(chalk.blueBright(`
-███████╗███████╗███╗   ██╗██╗   ██╗ █████╗ ███████╗
-██╔════╝██╔════╝████╗  ██║██║   ██║██╔══██╗██╔════╝
-███████╗█████╗  ██╔██╗ ██║██║   ██║███████║███████╗
-╚════██║██╔══╝  ██║╚██╗██║██║   ██║██╔══██║╚════██║
-███████║███████╗██║ ╚████║╚██████╔╝██║  ██║███████║
-╚══════╝╚══════╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝
-`));
-console.log(chalk.yellow("📌 Status Server: Starting..."));
+const config = require("./config.json");
+const FIREWALL_RULE_NAME_PREFIX = "BLOCKED BY SENVAS";
 
 const logger = winston.createLogger({
-    level: "info",
-    format: winston.format.combine(
-        winston.format.timestamp(),
-        winston.format.printf(({ level, message, timestamp }) => {
-            return `[${timestamp}] [Process ${process.pid}] ${level}: ${message}`;
-        })
-    ),
-    transports: [new winston.transports.Console()]
+  level: "info",
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.printf(({ level, message, timestamp }) =>
+      `[${timestamp}] [Process ${process.pid}] ${level}: ${message}`
+    )
+  ),
+  transports: [new winston.transports.Console()]
 });
 
-const blacklist = new Map();
-const requestCounts = new Map();
+const notFoundPage = fs.readFileSync(path.join(__dirname, "./html/error/404.html"), "utf-8");
+const forbiddenPage = fs.readFileSync(path.join(__dirname, "./html/error/403.html"), "utf-8");
 
-function addAddress(ip) {
-    blacklist.set(ip, Date.now() + ipLimiterConfig.banDuration);
-    if (ipLimiterConfig.permanentBan) {
-        exec(`netsh advfirewall firewall add rule name="Block-${ip}" dir=in action=block remoteip=${ip}`, (err) => {
-            if (err) logger.error(`Failed to block IP: ${ip}`);
-            else logger.info(`Permanently blocked IP: ${ip}`);
-        });
-    }
-}
-
-function requestHandler(req, res) {
-    let ip = req.connection.remoteAddress;
-
-    if (blacklist.has(ip)) {
-        if (Date.now() > blacklist.get(ip)) {
-            blacklist.delete(ip);
-        } else {
-            logger.warn(`Blocked IP: ${ip}`);
-            return req.connection.destroy();
-        }
-    }
-
-    const requestCount = requestCounts.get(ip) || 0;
-    if (requestCount > ipLimiterConfig.maxRequestsPerSecond) {
-        addAddress(ip);
-        logger.warn(`DDoS detected from IP: ${ip}`);
-        return req.connection.destroy();
-    }
-
-    requestCounts.set(ip, requestCount + 1);
-    setTimeout(() => {
-        requestCounts.set(ip, requestCounts.get(ip) - 1);
-    }, 1000);
-
-    fs.readFile(__dirname + "/htdocs/" + req.url, function (err, data) {
-        if (err) {
-            res.writeHead(404, { "Content-Type": "text/html" });
-            res.end("404 Not Found");
-            return req.connection.destroy();
-        }
-        res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(data);
-    });
-}
-
-http.createServer(requestHandler).listen(80, () => {
-    console.log(chalk.green("HTTP Server Running on Port 80"));
-});
-
-https.createServer({
+const sslConfig = {
+  "growtopia1.com": {
     key: fs.readFileSync("./ssl/www.growtopia1.com.key"),
     cert: fs.readFileSync("./ssl/www.growtopia1.com.crt")
-}, requestHandler).listen(443, () => {
-    console.log(chalk.green("HTTPS Server Running on Port 443"));
-});
+  },
+  "growtopia2.com": {
+    key: fs.readFileSync("./ssl/www.growtopia2.com.key"),
+    cert: fs.readFileSync("./ssl/www.growtopia2.com.crt")
+  }
+};
 
-setTimeout(() => {
-    console.log(chalk.green(" Status Server: RUNNING"));
-}, 2000);
+const allowedHosts = ["www.growtopia1.com", "www.growtopia2.com", "growtopia1.com", "growtopia2.com"];
+
+const requestCounts = new Map();
+
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const record = requestCounts.get(ip);
+  if (!record) {
+    requestCounts.set(ip, { count: 1, startTime: now });
+    return false;
+  }
+  if (now - record.startTime > config.timeWindowMs) {
+    record.count = 1;
+    record.startTime = now;
+    return false;
+  } else {
+    record.count++;
+    if (record.count > config.maxRequests) {
+      return true;
+    }
+    return false;
+  }
+}
+
+function blockIp(ip) {
+  const ruleName = `${FIREWALL_RULE_NAME_PREFIX} - ${ip}`;
+  const direction = config.firewallDirection || "in";
+  const cmd = `netsh advfirewall firewall add rule name="${ruleName}" dir=${direction} action=block remoteip=${ip}`;
+  exec(cmd, (error, stdout, stderr) => {
+    if (error) {
+      logger.error(`Gagal memblokir IP ${ip}: ${error}`);
+    } else {
+      logger.info(`IP ${ip} diblokir dengan rule "${ruleName}".`);
+    }
+  });
+}
+
+const serverData = "Server Data Placeholder";
+
+function requestHandler(req, res) {
+  const ip = req.connection.remoteAddress;
+  if (checkRateLimit(ip)) {
+    blockIp(ip);
+    return req.connection.destroy();
+  }
+  if (req.connection.bytesRead > 4999) {
+    blockIp(ip);
+    return req.connection.destroy();
+  }
+  const forbiddenMethods = ["DELETE", "PUT", "CONNECT", "PATCH"];
+  if (forbiddenMethods.includes(req.method)) {
+    blockIp(ip);
+    return req.connection.destroy();
+  }
+  if (
+    req.headers["content-length"] == "0" ||
+    req.headers["content-length"] == 0 ||
+    req.headers["content-type"] === "application/x-www-form-urlencoded\r\nX-Requested-With: XMLHttpRequest\r\n charset=utf-8\r\n"
+  ) {
+    blockIp(ip);
+    return req.connection.destroy();
+  }
+  const filePath = path.join(__dirname, "htdocs", req.url);
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      if (err.code === "ENOENT") {
+        if (
+          req.url.startsWith("/cache") &&
+          req.headers.accept === "**" &&
+          allowedHosts.indexOf(req.headers.host) >= 0
+        ) {
+          logger.info("Missing file -> " + req.url);
+        } else {
+          res.writeHead(404, { "Content-Type": "text/html" });
+          res.end(notFoundPage);
+          blockIp(ip);
+          return req.connection.destroy();
+        }
+      } else if (err.code === "EISDIR") {
+        res.setHeader("Content-Type", "text/html");
+        find.file(path.join(__dirname, "htdocs", req.url), (files) => {
+          if (files.length < 1) {
+            res.write("Directory does not contain any files");
+            blockIp(ip);
+            return req.connection.destroy();
+          }
+          if (req.url === "/cache/" || req.url === "/cache") {
+            res.writeHead(403, { "Content-Type": "text/html" });
+            res.end(forbiddenPage);
+            blockIp(ip);
+            return req.connection.destroy();
+          }
+          if (req.url === "/") {
+            res.writeHead(301, { "Content-Type": "text/plain" });
+            res.write("https://github.com/FahriCT");
+            res.end();
+            blockIp(ip);
+            return req.connection.destroy();
+          }
+          res.write(`<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">
+<html>
+<head>
+  <title>Index of ${req.url}</title>
+</head>
+<body>
+  <h1>Index of ${req.url}</h1>
+  <table>
+    <tr><th colspan="5"><hr></th></tr>`);
+          files.forEach((file) => {
+            const relativePath = path.relative(
+              path.join(__dirname, "htdocs", req.url),
+              file
+            );
+            res.write(
+              `<tr><td valign="top"><img src="/icons/unknown.png"></td><td><a href="${relativePath}">${relativePath}</a></td></tr>`
+            );
+          });
+          res.write(`<tr><th colspan="5"><hr></th></tr>
+  </table>
+  <address>Node-JS HTTPS Server at ${req.headers.host} Port 443</address>
+</body>
+</html>`);
+          res.end();
+        });
+      } else {
+        return;
+      }
+    } else {
+      if (req.url === "/growtopia/server_data.php") {
+        if (req.method.toLowerCase() !== "post") {
+          res.writeHead(403, { "Content-Type": "text/html" });
+          res.end(forbiddenPage);
+          blockIp(ip);
+          return req.connection.destroy();
+        }
+        req.on("data", () => {
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.write(serverData, (writeErr) => {
+            logger.info("Growtopia connection -> " + req.url);
+            if (writeErr) {
+              logger.error(writeErr);
+            }
+            res.end();
+          });
+        });
+      } else {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(data);
+      }
+    }
+  });
+}
+
+const httpsOptions = {
+  key: sslConfig["growtopia1.com"].key,
+  cert: sslConfig["growtopia1.com"].cert,
+  SNICallback: (domain, cb) => {
+    const normalizedDomain = domain.replace(/^www\./, "");
+    if (sslConfig[normalizedDomain]) {
+      cb(null, tls.createSecureContext(sslConfig[normalizedDomain]));
+    } else {
+      cb(null, tls.createSecureContext(sslConfig["growtopia1.com"]));
+    }
+  }
+};
+
+if (cluster.isMaster) {
+  logger.info("Server Started");
+  logger.info("Server running on port 80");
+  logger.info("Server running on port 443");
+  const numCPUs = os.cpus().length;
+  for (let i = 0; i < numCPUs; i++) {
+    cluster.fork();
+  }
+  cluster.on("exit", (worker, code, signal) => {
+    cluster.fork();
+  });
+} else {
+  const httpServer = http.createServer(requestHandler);
+  httpServer.listen(80, () => {
+    logger.info(`HTTP server listening on port 80 (Process ${process.pid})`);
+  });
+  const httpsServer = https.createServer(httpsOptions, requestHandler);
+  httpsServer.setTimeout(10000);
+  httpsServer.on("connection", (socket) => {
+    socket.setTimeout(5000);
+  });
+  httpsServer.listen(443, () => {
+    logger.info(`HTTPS server listening on port 443 (Process ${process.pid})`);
+  });
+}

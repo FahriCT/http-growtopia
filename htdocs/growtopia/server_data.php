@@ -1,4 +1,4 @@
-server|20.169.48.132
+server|your server ip
 port|17091
 type|1
 #maint|Maintenance message

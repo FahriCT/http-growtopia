@@ -1,0 +1,9 @@
+{
+  "maxRequests": 10,
+  "timeWindowMs": 60000,
+  "firewallDirection": "in"
+}
+
+//maxRequests: jumlah maksimal request yang diperbolehkan.
+//timeWindowMs: rentang waktu (dalam milidetik) untuk menghitung maxRequests.
+//firewallDirection: arah pemblokiran (umumnya "in" untuk incoming traffic).

@@ -41,4 +41,4 @@ Proyek ini adalah sebuah server HTTP/HTTPS yang dilengkapi dengan sistem proteks
 Kami menerima kontribusi dari siapa saja. Silakan fork repositori ini dan buat pull request untuk perbaikan atau penambahan fitur.
 
 ## Lisensi
-Proyek ini dilisensikan di bawah [MIT License](LICENSE).
+Proyek ini dilisensikan di bawah [MIT License](LICENSE.md).

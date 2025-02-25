@@ -40,7 +40,6 @@ const sslConfig = {
 const allowedHosts = ["www.growtopia1.com", "www.growtopia2.com", "growtopia1.com", "growtopia2.com"];
 
 const requestCounts = new Map();
-
 function checkRateLimit(ip) {
   const now = Date.now();
   const record = requestCounts.get(ip);
@@ -61,15 +60,38 @@ function checkRateLimit(ip) {
   }
 }
 
+const forbiddenMethodCounts = new Map();
+function incrementForbiddenMethodCount(ip) {
+  let count = forbiddenMethodCounts.get(ip) || 0;
+  count++;
+  forbiddenMethodCounts.set(ip, count);
+  return count;
+}
+
+function normalizeIp(ip) {
+  if (ip.startsWith("::ffff:")) {
+    return ip.replace("::ffff:", "");
+  }
+  return ip;
+}
+
+const blockedIps = new Set();
 function blockIp(ip) {
-  const ruleName = `${FIREWALL_RULE_NAME_PREFIX} - ${ip}`;
+  const normalizedIp = normalizeIp(ip);
+  if (blockedIps.has(normalizedIp)) {
+    logger.info(`IP ${normalizedIp} sudah ada di rule firewall, tidak menambahkan rule baru.`);
+    return;
+  }
+  blockedIps.add(normalizedIp);
+  const ruleName = `${FIREWALL_RULE_NAME_PREFIX} - ${normalizedIp}`;
   const direction = config.firewallDirection || "in";
-  const cmd = `netsh advfirewall firewall add rule name="${ruleName}" dir=${direction} action=block remoteip=${ip}`;
+  const cmd = `netsh advfirewall firewall add rule name="${ruleName}" dir=${direction} action=block remoteip=${normalizedIp}`;
   exec(cmd, (error, stdout, stderr) => {
     if (error) {
-      logger.error(`Gagal memblokir IP ${ip}: ${error}`);
+      logger.error(`Gagal memblokir IP ${normalizedIp}: ${error}`);
+      blockedIps.delete(normalizedIp);
     } else {
-      logger.info(`IP ${ip} diblokir dengan rule "${ruleName}".`);
+      logger.info(`IP ${normalizedIp} diblokir dengan rule "${ruleName}".`);
     }
   });
 }
@@ -77,20 +99,28 @@ function blockIp(ip) {
 const serverData = "Server Data Placeholder";
 
 function requestHandler(req, res) {
-  const ip = req.connection.remoteAddress;
+  let ip = req.connection.remoteAddress;
+  ip = normalizeIp(ip);
+
   if (checkRateLimit(ip)) {
     blockIp(ip);
     return req.connection.destroy();
   }
+  
   if (req.connection.bytesRead > 4999) {
     blockIp(ip);
     return req.connection.destroy();
   }
+  
   const forbiddenMethods = ["DELETE", "PUT", "CONNECT", "PATCH"];
   if (forbiddenMethods.includes(req.method)) {
-    blockIp(ip);
+    const count = incrementForbiddenMethodCount(ip);
+    if (count >= 4) {
+      blockIp(ip);
+    }
     return req.connection.destroy();
   }
+  
   if (
     req.headers["content-length"] == "0" ||
     req.headers["content-length"] == 0 ||
@@ -99,6 +129,7 @@ function requestHandler(req, res) {
     blockIp(ip);
     return req.connection.destroy();
   }
+  
   const filePath = path.join(__dirname, "htdocs", req.url);
   fs.readFile(filePath, (err, data) => {
     if (err) {

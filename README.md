@@ -28,7 +28,7 @@ Proyek ini adalah sebuah server HTTP/HTTPS yang dilengkapi dengan sistem proteks
     ```
 
 ## Penggunaan
-1. Sesuaikan konfigurasi di `config.js` sesuai kebutuhan Anda.
+1. Sesuaikan konfigurasi di `config.json` sesuai kebutuhan Anda.
 2. Jalankan server:
     ```bash
     node index.js

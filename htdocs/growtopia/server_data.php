@@ -2,7 +2,7 @@ server|your server ip
 port|17091
 type|1
 #maint|Maintenance message
-
+loginurl|your backend login
 beta_server|127.0.0.1
 beta_port|17091
 

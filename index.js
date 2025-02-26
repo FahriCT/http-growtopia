@@ -31,13 +31,17 @@ const sslConfig = {
     key: fs.readFileSync("./ssl/www.growtopia1.com.key"),
     cert: fs.readFileSync("./ssl/www.growtopia1.com.crt")
   },
+  "cache.senvas.my.id": {
+    key: fs.readFileSync("./ssl/cache.senvas.my.id.pem"),
+    cert: fs.readFileSync("./ssl/cache.senvas.my.id.pem")
+  },
   "growtopia2.com": {
     key: fs.readFileSync("./ssl/www.growtopia2.com.key"),
     cert: fs.readFileSync("./ssl/www.growtopia2.com.crt")
   }
 };
 
-const allowedHosts = ["www.growtopia1.com", "www.growtopia2.com", "growtopia1.com", "growtopia2.com"];
+const allowedHosts = ["www.growtopia1.com", "www.growtopia2.com", "growtopia1.com", "growtopia2.com", "senvas.my.id", "cache.senvas.my.id"];
 
 const requestCounts = new Map();
 function checkRateLimit(ip) {
